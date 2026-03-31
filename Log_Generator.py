@@ -2,8 +2,17 @@ import json
 import random
 import time
 import datetime
+import argparse
+import sys
 
-# Mock Data
+# Try to import scapy for live sniffing
+try:
+    from scapy.all import sniff, IP, TCP, UDP
+    SCAPY_AVAILABLE = True
+except ImportError:
+    SCAPY_AVAILABLE = False
+
+# --- Mock Data Pools (For Test Mode) ---
 NORMAL_IPS = ["192.168.1.10", "192.168.1.15", "10.0.0.5", "172.16.0.22"]
 ATTACKER_IPS = ["198.51.100.23", "203.0.113.45", "45.33.32.156"]
 USER_AGENTS = [
@@ -16,10 +25,9 @@ SUSPICIOUS_AGENTS = ["curl/7.68.0", "Nmap Scripting Engine", "python-requests/2.
 ENDPOINTS = ["/index.html", "/about", "/api/v1/data", "/images/logo.png"]
 SENSITIVE_ENDPOINTS = ["/admin/login", "/api/v1/users", "/config.yml"]
 
-# Log Generator Functions
+# --- Generators for Edge Cases (Test Mode) ---
 
 def generate_good_log():
-    """Normal traffic: 200 OK, standard user agents, normal endpoints."""
     return {
         "timestamp": datetime.datetime.now().isoformat(),
         "ip": random.choice(NORMAL_IPS),
@@ -31,72 +39,100 @@ def generate_good_log():
     }
 
 def generate_bad_log():
-    """Clear attacks: SQLi, XSS, Path Traversal."""
-    payloads = [
-        "/?id=1' OR '1'='1",               # SQL Injection
-        "/?search=<script>alert(1)</script>", # XSS
-        "/../../../../etc/passwd"          # Path Traversal
-    ]
+    payloads = ["/?id=1' OR '1'='1", "/?search=<script>alert(1)</script>", "/../../../../etc/passwd"]
     return {
         "timestamp": datetime.datetime.now().isoformat(),
         "ip": random.choice(ATTACKER_IPS),
         "method": "GET",
         "endpoint": random.choice(payloads),
-        "status": 403, # Blocked or forbidden
+        "status": 403,
         "user_agent": random.choice(USER_AGENTS),
         "message": "Potential malicious payload detected"
     }
 
 def generate_suspicious_log():
-    """Potentially bad: Brute force attempts (401s), weird user agents, admin access."""
     return {
         "timestamp": datetime.datetime.now().isoformat(),
         "ip": random.choice(ATTACKER_IPS + NORMAL_IPS),
         "method": "POST",
         "endpoint": random.choice(SENSITIVE_ENDPOINTS),
-        "status": random.choice([401, 403, 404, 500]), # Failed logins or errors
+        "status": random.choice([401, 403, 404, 500]),
         "user_agent": random.choice(SUSPICIOUS_AGENTS),
         "message": "Failed authentication or unauthorized access attempt"
     }
 
 def generate_damaged_log():
-    """Damaged in transit: Truncated JSON, missing fields, or completely corrupted strings."""
-    # Start with a good log
     raw_json = json.dumps(generate_good_log())
-    
     damage_type = random.randint(1, 3)
     if damage_type == 1:
-        # Truncate the string halfway (Simulates network drop)
         return raw_json[:len(raw_json) // 2] 
     elif damage_type == 2:
-        # Corrupt the syntax (Replace quotes, which breaks JSON parsing)
         return raw_json.replace('"', "'") 
     else:
-        # Send complete gibberish (Simulates buffer overflow attempt or bad encoding)
         return r"\x00\x00\x00\x00\x00\xFF\xFF\xFA\x8B\x01\x02\x03\x04"
 
+# --- Live Traffic Processor ---
+
+def process_live_packet(packet):
+    """Callback function executed for every packet sniffed by Scapy."""
+    if IP in packet:
+        # Build the base JSON log from the IP layer
+        log_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "ip": packet[IP].src,          # Source IP
+            "dest_ip": packet[IP].dst,     # Destination IP
+            "protocol": "IP",
+            "length": len(packet),
+            "message": "Live network packet captured"
+        }
+        
+        # Enrich the log with port data if it's TCP or UDP
+        if TCP in packet:
+            log_entry["src_port"] = packet[TCP].sport
+            log_entry["dest_port"] = packet[TCP].dport
+            log_entry["protocol"] = "TCP"
+        elif UDP in packet:
+            log_entry["src_port"] = packet[UDP].sport
+            log_entry["dest_port"] = packet[UDP].dport
+            log_entry["protocol"] = "UDP"
+
+        # Output to stdout just like the test logs
+        print(json.dumps(log_entry), flush=True)
+
+# --- Main Event Loop ---
 
 def main():
-    print("Starting SIEM Log Generator... Press Ctrl+C to stop.", flush=True)
-    
-    while True:
-        # Determine the probability of each log type
-        roll = random.randint(1, 100)
-        
-        if roll <= 70:
-            log_entry = json.dumps(generate_good_log())      # 70% Good traffic
-        elif roll <= 85:
-            log_entry = json.dumps(generate_bad_log())       # 15% Definite Attacks
-        elif roll <= 95:
-            log_entry = json.dumps(generate_suspicious_log())# 10% Suspicious/Anomalous
-        else:
-            log_entry = generate_damaged_log()               # 5% Corrupted/Damaged
-        
-        # Print to stdout (Docker collects this)
-        print(log_entry, flush=True)
-        
-        # Sleep to simulate real-world log spacing (between 0.1 and 1.5 seconds)
-        time.sleep(random.uniform(0.1, 1.5))
+    # Set up command line arguments
+    parser = argparse.ArgumentParser(description="SIEM-Lite Log Generator")
+    parser.add_argument('--mode', choices=['test', 'live'], default='test', 
+                        help="Run in 'test' (mock data) or 'live' (packet sniffing) mode.")
+    args = parser.parse_args()
+
+    if args.mode == 'test':
+        print("Starting SIEM Log Generator in TEST mode... Press Ctrl+C to stop.", flush=True)
+        while True:
+            roll = random.randint(1, 100)
+            if roll <= 70:
+                log_entry = json.dumps(generate_good_log())
+            elif roll <= 85:
+                log_entry = json.dumps(generate_bad_log())
+            elif roll <= 95:
+                log_entry = json.dumps(generate_suspicious_log())
+            else:
+                log_entry = generate_damaged_log()
+            
+            print(log_entry, flush=True)
+            time.sleep(random.uniform(0.1, 1.5))
+
+    elif args.mode == 'live':
+        if not SCAPY_AVAILABLE:
+            print("CRITICAL ERROR: 'scapy' library is not installed. Cannot run live mode.", file=sys.stderr)
+            print("Run 'pip install scapy' to install it.", file=sys.stderr)
+            sys.exit(1)
+            
+        print("Starting SIEM Log Generator in LIVE mode... Sniffing host traffic. Press Ctrl+C to stop.", flush=True)
+        # Sniff network traffic. store=0 ensures we don't hold packets in RAM and crash the app.
+        sniff(prn=process_live_packet, store=0)
 
 if __name__ == "__main__":
     main()
