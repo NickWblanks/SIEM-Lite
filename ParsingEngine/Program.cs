@@ -4,6 +4,7 @@ using ParsingEngine.Services;
 using Elastic.Clients.Elasticsearch;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseUrls("http://0.0.0.0:5000");
 
 // 1. Register our Threat Detection Service
 builder.Services.AddSingleton<ThreatDetectionService>();
@@ -68,4 +69,4 @@ app.MapPost("/api/ingest", async ([FromBody] LogEvent incomingLog, ThreatDetecti
     });
 });
 
-app.Run("http://localhost:5000");
+app.Run("http://0.0.0.0:5000");
