@@ -4,6 +4,8 @@ import time
 import datetime
 import argparse
 import sys
+import requests
+import datetime
 
 # Try to import scapy for live sniffing
 try:
@@ -29,7 +31,7 @@ SENSITIVE_ENDPOINTS = ["/admin/login", "/api/v1/users", "/config.yml"]
 
 def generate_good_log():
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(NORMAL_IPS),
         "method": random.choice(["GET", "POST"]),
         "endpoint": random.choice(ENDPOINTS),
@@ -41,7 +43,7 @@ def generate_good_log():
 def generate_bad_log():
     payloads = ["/?id=1' OR '1'='1", "/?search=<script>alert(1)</script>", "/../../../../etc/passwd"]
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(ATTACKER_IPS),
         "method": "GET",
         "endpoint": random.choice(payloads),
@@ -52,7 +54,7 @@ def generate_bad_log():
 
 def generate_suspicious_log():
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(ATTACKER_IPS + NORMAL_IPS),
         "method": "POST",
         "endpoint": random.choice(SENSITIVE_ENDPOINTS),
@@ -76,17 +78,15 @@ def generate_damaged_log():
 def process_live_packet(packet):
     """Callback function executed for every packet sniffed by Scapy."""
     if IP in packet:
-        # Build the base JSON log from the IP layer
         log_entry = {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "ip": packet[IP].src,          # Source IP
-            "dest_ip": packet[IP].dst,     # Destination IP
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "ip": packet[IP].src,          
+            "dest_ip": packet[IP].dst,     
             "protocol": "IP",
             "length": len(packet),
             "message": "Live network packet captured"
         }
         
-        # Enrich the log with port data if it's TCP or UDP
         if TCP in packet:
             log_entry["src_port"] = packet[TCP].sport
             log_entry["dest_port"] = packet[TCP].dport
@@ -96,8 +96,16 @@ def process_live_packet(packet):
             log_entry["dest_port"] = packet[UDP].dport
             log_entry["protocol"] = "UDP"
 
-        # Output to stdout just like the test logs
-        print(json.dumps(log_entry), flush=True)
+        json_data = json.dumps(log_entry)
+        print(json_data, flush=True)
+
+        # --- NEW API HANDOFF FOR LIVE TRAFFIC ---
+        try:
+            headers = {'Content-Type': 'application/json'}
+            # Note: Timeout added so live mode doesn't completely freeze if C# is off
+            requests.post("http://localhost:5000/api/ingest", data=json_data, headers=headers, timeout=0.5)
+        except requests.exceptions.RequestException:
+            pass # We pass silently here so it doesn't spam the console 100 times a second
 
 # --- Main Event Loop ---
 
@@ -122,6 +130,12 @@ def main():
                 log_entry = generate_damaged_log()
             
             print(log_entry, flush=True)
+            try:
+                headers = {'Content-Type': 'application/json'}
+                requests.post("http://localhost:5000/api/ingest", data=log_entry, headers=headers)
+            except requests.exceptions.ConnectionError:
+                print("C# API is offline. Make sure ParsingEngine is running.")
+            
             time.sleep(random.uniform(0.1, 1.5))
 
     elif args.mode == 'live':
