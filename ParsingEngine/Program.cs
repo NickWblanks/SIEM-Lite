@@ -10,9 +10,14 @@ builder.Services.AddSingleton<ThreatDetectionService>();
 
 // 2. Configure and Register the Elasticsearch Client
 // (Since we disabled xpack.security in Docker, we don't need a password here)
-var elasticSettings = new ElasticsearchClientSettings(new Uri("http://localhost:9200"))
-    .DefaultIndex("siem-logs"); // Tell it to put everything in the "siem-logs" index by default
+// Define the URL variable first
+var elasticUrl = Environment.GetEnvironmentVariable("ELASTIC_URL") ?? "http://localhost:9200";
 
+var elasticSettings = new ElasticsearchClientSettings(new Uri(elasticUrl))
+    .DefaultIndex("siem-logs");
+
+// This replaces the ValueRenderMode line and forces C# to respect your attributes
+// It ensures that [JsonPropertyName("src_port")] actually sends "src_port" to the DB
 var elasticClient = new ElasticsearchClient(elasticSettings);
 builder.Services.AddSingleton(elasticClient);
 
@@ -50,6 +55,10 @@ app.MapPost("/api/ingest", async ([FromBody] LogEvent incomingLog, ThreatDetecti
         Console.ForegroundColor = ConsoleColor.Magenta;
         Console.WriteLine($"[DB ERROR] Failed to save log to Elasticsearch: {indexResponse.DebugInformation}");
         Console.ResetColor();
+    }
+    else 
+    {
+        Console.WriteLine($"[SUCCESS] Log saved to ES for IP: {enrichedLog.IpAddress}");
     }
 
     // D. Respond to the Python script
