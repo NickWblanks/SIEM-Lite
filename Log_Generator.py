@@ -5,6 +5,7 @@ import datetime
 import argparse
 import sys
 import requests
+import datetime
 
 # Try to import scapy for live sniffing
 try:
@@ -30,7 +31,7 @@ SENSITIVE_ENDPOINTS = ["/admin/login", "/api/v1/users", "/config.yml"]
 
 def generate_good_log():
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(NORMAL_IPS),
         "method": random.choice(["GET", "POST"]),
         "endpoint": random.choice(ENDPOINTS),
@@ -42,7 +43,7 @@ def generate_good_log():
 def generate_bad_log():
     payloads = ["/?id=1' OR '1'='1", "/?search=<script>alert(1)</script>", "/../../../../etc/passwd"]
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(ATTACKER_IPS),
         "method": "GET",
         "endpoint": random.choice(payloads),
@@ -53,7 +54,7 @@ def generate_bad_log():
 
 def generate_suspicious_log():
     return {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "ip": random.choice(ATTACKER_IPS + NORMAL_IPS),
         "method": "POST",
         "endpoint": random.choice(SENSITIVE_ENDPOINTS),
@@ -78,7 +79,7 @@ def process_live_packet(packet):
     """Callback function executed for every packet sniffed by Scapy."""
     if IP in packet:
         log_entry = {
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "ip": packet[IP].src,          
             "dest_ip": packet[IP].dst,     
             "protocol": "IP",
